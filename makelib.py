@@ -101,7 +101,7 @@ class MakeParser:
         if varname not in self.allvars:
             var = self.get_variable(varname)
             parambranch = MakeLaneBranch (self.lane, self.context[-1], "{0:s} is defined as a parameter".format(varname))
-            paramvalue = ("parameter", parambranch)
+            paramvalue = ("#par({0:s})".format(varname), parambranch)
             var.values.append(paramvalue)
             defbranch = MakeLaneBranch (self.lane, self.context[-1], "{0:s} is not defined as a parameter".format(varname))
             defvalue = (value, defbranch)
@@ -133,8 +133,10 @@ class MakeParser:
         expansion = self.expand_value(value)
         var.values.clear()
         if len(expansion) == 0:
+            logging.debug('Variable %s simple set to %s', var.name, value)
             var.values.append( (value, self.lane) )
         else:
+            logging.debug('Variable %s simple set to %s', var.name, expansion)
             var.values.extend(expansion)
 
     def expand_variable_keep(self, var):
@@ -148,9 +150,24 @@ class MakeParser:
                 for (expvalue, explane) in expansion:
                     var.values.append( (expvalue, MakeLaneJoin(lane, explane, self.context[-1]) ) )
 
-    # if no expansion returns []
     def expand_value(self, value):
         logging.debug('Expanding value \"%s\"', value)
+        step = self.expand_value_step(value)
+        if len(step) == 0:
+            return []
+        total = []
+        for (expvalue, explane) in step:
+            again = self.expand_value(expvalue)
+            if len(again) == 0:
+                total.append( (expvalue, explane) )
+            else:
+                for (avalue, alane) in again:
+                    total.append( (avalue, MakeLaneJoin(explane, alane, self.context[-1]) ) )
+        return total
+
+    # if no expansion returns []
+    def expand_value_step(self, value):
+        logging.debug('Expanding value stepping \"%s\"', value)
         i = value.find('$(')
         if i < 0 :
             return []
@@ -162,9 +179,20 @@ class MakeParser:
             return []
         elif value[0] == ')':
             if varname in self.allvars:
-                return list( map( lambda x: (pre + x[0] + value[1:] , x[1]) , self.allvars[varname].values ) )
+                if len(self.allvars[varname].values) > 0:
+                    total = []
+                    logging.debug('Going recursive for \"%s\" of %s', varname, self.allvars[varname].values)
+                    for (expval,explane) in map( lambda x: (pre + x[0] + value[1:] , x[1]) , self.allvars[varname].values ):
+                        logging.debug('Expanding value, expval=\"%s\"', expval)
+                        recurs = self.expand_value(expval)
+                        if len(recurs) == 0:
+                            total.append( (expval, explane) )
+                        else:
+                            total.extend( map( lambda x: (x[0], MakeLaneJoin(explane, x[1], self.context[-1]) ) , recurs) )
+                    return total
             else:
-                return [ ( pre + value[1:] , self.lane ) ]
+                logging.warning('Undefined variable %s', varname)
+            return [ ( pre + value[1:] , self.lane ) ]
         else:
             logging.error('Unexpected symbol \"%s\" at %s, value=\"%s\"', value[0], self.context[-1].istr, value )
         return []
@@ -227,7 +255,7 @@ def filter_empty (line):
     return False
 
 def parse_variable(line):
-    varpattern = re.compile(r"\.?\w*")
+    varpattern = re.compile(r"\.?[\w-]*")
     varmatch = varpattern.match(line)
     if varmatch.end() > 0:
         varname = varmatch.group()

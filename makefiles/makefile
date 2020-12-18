@@ -10,6 +10,12 @@ name12 ?= $(MAKEFILE_LIST)
 name13 ?= $(name12)
 ROOT  := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
+a = a
+b = $(a)
+c = $(b)
+name14 := $(c)
+name14 := $(name14)d
+
 ifeq "$(name5)" " makefile"
 include $(ROOT)/inc3.mk
 endif
