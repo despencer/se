@@ -3,7 +3,7 @@
 import logging
 import makelib as m
 
-logging.basicConfig(filename='makefile.log', filemode='w', level=logging.DEBUG, format='%(asctime)s %(levelname)s:%(message)s')
+logging.basicConfig(filename='makefile.log', filemode='w', level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
 make = m.parse("/mnt/mobihome/sources/github/betaflight/betaflight/makefile")
 print("Variables")

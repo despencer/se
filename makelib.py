@@ -1,5 +1,6 @@
 import logging
 import re
+import makefuncs as mf
 
 def parse(filename):
     parser = MakeParser()
@@ -176,7 +177,7 @@ class MakeParser:
         if len(value) == 0:
             logging.error('Unexpected value end at %s', self.context[-1].istr )
         elif value[0] == ' ':
-            return []
+            return self.expand_function_call(varname, value[1:])
         elif value[0] == ')':
             if varname in self.allvars:
                 if len(self.allvars[varname].values) > 0:
@@ -196,6 +197,22 @@ class MakeParser:
         else:
             logging.error('Unexpected symbol \"%s\" at %s, value=\"%s\"', value[0], self.context[-1].istr, value )
         return []
+
+    def expand_function_call(self, funcname, value):
+        logging.debug('Expand function \"%s\" with \"%s\"', funcname, value)
+        calls = [ MakeFunctionCall(value, self.lane) ]
+        icurr = 0
+        while icurr < len(calls):
+            (ipos, symb) = parse_func_token(calls[icurr].line)
+            logging.debug('Get symbol \"%s\" at %s', symb, ipos)
+            if symb == '$':
+                calls.extend( calls[icurr].addvalue( calls[icurr].line[:ipos], self.expand_value(calls[icurr].line[ipos:]), self.context[-1]) )
+            elif symb == ',':
+                calls[icurr].makeargument(ipos)
+            else:
+                calls[icurr].makeargument(ipos)
+                icurr = icurr + 1
+        return list ( map( lambda x: x.makecall(funcname) , calls) )
 
     def parse_target (self, line):
         logging.debug('Processing target %s', line)
@@ -241,6 +258,37 @@ class MakeVariable:
             ret = ret + "    {0:s}@{1:d} = '{2:s}'\n".format(v[1].filename, v[1].istr, v[0])
         return ret
 
+class MakeFunctionCall:
+    def __init__(self, line, lane):
+        self.lane = lane
+        self.line = line
+        self.callargs = []
+        self.funcs = mf.allfuncs()
+
+    def addvalue(self, prefix, expands, context):
+        orglane = self.lane
+        self.lane = MakeLaneJoin(orglane, expands[0][1], context)
+        self.line = prefix + expands[0][0]
+        newcalls = []
+        for (eline, elane) in expands[1:]:
+            nc = MakeFunctionCall( prefix + eline, MakeLaneJoin(orglane, elane, context) )
+            nc.callargs = list(self.callargs)
+            newcalls.append( nc )
+        return newcalls
+
+    def makeargument(self, ipos):
+        self.callargs.append( self.line[:ipos].replace('$$', '$') )
+        self.line = self.line[ipos+1:]
+
+    def makecall(self, funcname):
+        logging.debug('Make call \"%s\" with %s arguments', funcname, len(self.callargs))
+        for a in self.callargs:
+            logging.debug('Make call argument \"%s\"', a)
+        if funcname in self.funcs:
+            return (self.funcs[funcname](self.callargs) + self.line, self.lane)
+        logging.error('Function \"%s\" not found', funcname)
+        return (self.line, self.lane)
+
 class MakeData:
     def __init__(self, variables):
         self.variables = variables
@@ -264,3 +312,14 @@ def parse_variable(line):
     else:
         return (None,line)
 
+def parse_func_token(line):
+    buf = [ (len(line), ')' ) ]
+    for c in ['$' , ',' , ')' ]:
+        ipos = line.find(c)
+        while c == '$' and line[ipos:ipos+2] == '$$':    # special case of '$$' should be skipped
+            ipos = line.find(c, ipos+2)
+        if ipos >= 0 and ipos < buf[-1][0]:
+            buf.append( (ipos, c) )
+    if buf[-1][0] == len(line):
+        logging.error('No ending symbols for function at \"%s\"', line)
+    return buf[-1]
