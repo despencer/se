@@ -21,6 +21,8 @@ class MakeParser:
         logging.info('Parsing %s', filename)
         self.context.append(MakeParserContext(filename))
         self.lane = MakeLane(self.context[-1])
+        mflist = self.get_variable("MAKEFILE_LIST")
+        mflist.values.append( (filename, self.lane) )
         with open(filename) as f:
             lines = f.readlines()
         concat = ''
@@ -212,7 +214,7 @@ class MakeParser:
             else:
                 calls[icurr].makeargument(ipos)
                 icurr = icurr + 1
-        return list ( map( lambda x: x.makecall(funcname) , calls) )
+        return list ( map( lambda x: x.makecall(funcname, self.context[-1]) , calls) )
 
     def parse_target (self, line):
         logging.debug('Processing target %s', line)
@@ -280,12 +282,18 @@ class MakeFunctionCall:
         self.callargs.append( self.line[:ipos].replace('$$', '$') )
         self.line = self.line[ipos+1:]
 
-    def makecall(self, funcname):
+    def makecall(self, funcname, context):
         logging.debug('Make call \"%s\" with %s arguments', funcname, len(self.callargs))
         for a in self.callargs:
             logging.debug('Make call argument \"%s\"', a)
         if funcname in self.funcs:
-            return (self.funcs[funcname](self.callargs) + self.line, self.lane)
+            ret = self.funcs[funcname](self.callargs, context);
+            if isinstance(ret, tuple):
+                logging.debug('Call returns \"%s\"', ret[0])
+                return (ret[0] + self.line, ret[1])
+            else:
+                logging.debug('Call returns \"%s\"', ret)
+                return (ret + self.line, self.lane)
         logging.error('Function \"%s\" not found', funcname)
         return (self.line, self.lane)
 

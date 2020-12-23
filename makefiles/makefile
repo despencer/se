@@ -34,6 +34,13 @@ name4 := $(MAKEFILE_LIST)
 
 include $(ROOT)/inc2.mk
 
+name15 := $(patsubst ab,d,ab ac a b)
+name16 := $(patsubst a%,d,ab ac a b)
+name17 := $(patsubst a%,%d,ab ac a b za zaz)
+name18 := $(patsubst a%b,%d,ab ac a b za zaz azab)
+name19 := $(patsubst a,%d,ab ac a b)
+name20 := $(patsubst ab%ba,c%c,abba aba a b)
+
 all:
 	@echo name1 = \'$(name1)\'
 	@echo name2 = \'$(name2)\'
@@ -50,5 +57,10 @@ all:
 	@echo name13 = \'$(name13)\'
 	@echo name14 = \'$(name14)\'
 	@echo name15 = \'$(name15)\'
+	@echo name16 = \'$(name16)\'
+	@echo name17 = \'$(name17)\'
+	@echo name18 = \'$(name18)\'
+	@echo name19 = \'$(name19)\'
+	@echo name20 = \'$(name20)\'
 
 include $(ROOT)/inc3.mk
