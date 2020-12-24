@@ -94,7 +94,8 @@ class MakeParser:
         for st in [ ('?=', self.parse_default_setting),
                     ('=',  self.parse_recursive_expansion),
                     (':=', self.parse_simple_expansion),
-                    ('::=', self.parse_simple_expansion)  ]:
+                    ('::=', self.parse_simple_expansion),
+                    ('+=', self.parse_addition)  ]:
             if line.startswith(st[0]):
                 return (st[1], line[len(st[0]):])
         return (None, line)
@@ -121,8 +122,29 @@ class MakeParser:
     def parse_simple_expansion (self, varname, value):
         logging.debug('Simple %s to %s', varname, value)
         var = self.get_variable(varname)
-        self.expand_variable_overwrite(var, value)
         self.recursions.discard(var)
+        self.expand_variable_overwrite(var, value)
+
+    def parse_addition (self, varname, value):
+        logging.debug('Addition \"%s\" with \"%s\"', varname, value)
+        if varname not in self.allvars:
+            self.parse_recursive_expansion(varname, value)
+        else:
+            var = self.allvars[varname]
+            if var in self.recursions:
+                oldval = var.values
+                var.values = list( map ( lambda x: (x[0]+value, x[1]), oldval) )
+            else:
+                values = list(var.values)
+                var.values.clear()
+                for (preval , lane) in values:
+                    expansion = self.expand_value(preval + value, [ varname ] )
+                    if len(expansion) == 0:
+                        var.values.append( (preval + value, lane) )
+                    else:
+                        for (expvalue, explane) in expansion:
+                            var.values.append( (expvalue, MakeLaneJoin(lane, explane, self.context[-1]) ) )
+        logging.debug('Addition \"%s\" processed"', varname)
 
     def get_variable(self, varname):
         if varname not in self.allvars:
@@ -133,7 +155,7 @@ class MakeParser:
             return self.allvars[varname]
 
     def expand_variable_overwrite(self, var, value):
-        expansion = self.expand_value(value)
+        expansion = self.expand_value(value, [ var.name ])
         var.values.clear()
         if len(expansion) == 0:
             logging.debug('Variable %s simple set to %s', var.name, value)
@@ -146,21 +168,21 @@ class MakeParser:
         values = list(var.values)
         var.values.clear()
         for (value , lane) in values:
-            expansion = self.expand_value(value)
+            expansion = self.expand_value(value, [ var.name ])
             if len(expansion) == 0:
                 var.values.append( (value, lane) )
             else:
                 for (expvalue, explane) in expansion:
                     var.values.append( (expvalue, MakeLaneJoin(lane, explane, self.context[-1]) ) )
 
-    def expand_value(self, value):
-        logging.debug('Expanding value \"%s\"', value)
-        step = self.expand_value_step(value)
+    def expand_value(self, value, varstack):
+        logging.debug('Expanding value \"%s\, varstack=%s"', value, varstack)
+        step = self.expand_value_step(value, varstack)
         if len(step) == 0:
             return []
         total = []
         for (expvalue, explane) in step:
-            again = self.expand_value(expvalue)
+            again = self.expand_value(expvalue, varstack)
             if len(again) == 0:
                 total.append( (expvalue, explane) )
             else:
@@ -169,8 +191,8 @@ class MakeParser:
         return total
 
     # if no expansion returns []
-    def expand_value_step(self, value):
-        logging.debug('Expanding value stepping \"%s\"', value)
+    def expand_value_step(self, value, varstack):
+        logging.debug('Expanding value stepping \"%s\", varstack=%s', value, varstack)
         i = value.find('$(')
         if i < 0 :
             return []
@@ -179,19 +201,26 @@ class MakeParser:
         if len(value) == 0:
             logging.error('Unexpected value end at %s', self.context[-1].istr )
         elif value[0] == ' ':
-            return self.expand_function_call(varname, value[1:])
+            return self.expand_function_call(varname, value[1:], varstack)
         elif value[0] == ')':
             if varname in self.allvars:
                 if len(self.allvars[varname].values) > 0:
                     total = []
-                    logging.debug('Going recursive for \"%s\" of %s', varname, self.allvars[varname].values)
-                    for (expval,explane) in map( lambda x: (pre + x[0] + value[1:] , x[1]) , self.allvars[varname].values ):
-                        logging.debug('Expanding value, expval=\"%s\"', expval)
-                        recurs = self.expand_value(expval)
+                    logging.debug('Going recursive for \"%s\" of %s, varstack %s', varname, self.allvars[varname].values, varstack)
+                    for (expval,explane) in self.allvars[varname].values:
+                        recurs = []
+                        if self.allvars[varname] in self.recursions:
+                            if varname in varstack:
+                                logging.error('Unfinite recursion found for variable %s', varname )
+                            else:
+                                varstack.append(varname)
+                                recurs = self.expand_value(expval, varstack)
+                                varstack.pop()
                         if len(recurs) == 0:
-                            total.append( (expval, explane) )
+                            total.append( (pre + expval + value[1:], explane) )
                         else:
-                            total.extend( map( lambda x: (x[0], MakeLaneJoin(explane, x[1], self.context[-1]) ) , recurs) )
+                            total.extend( map( lambda x: (pre + x[0] + value[1:] , MakeLaneJoin(explane, x[1], self.context[-1])) , recurs ))
+                    logging.debug('Back from recursive for \"%s\", varstack %s', varname,  varstack)
                     return total
             else:
                 logging.warning('Undefined variable %s', varname)
@@ -200,7 +229,7 @@ class MakeParser:
             logging.error('Unexpected symbol \"%s\" at %s, value=\"%s\"', value[0], self.context[-1].istr, value )
         return []
 
-    def expand_function_call(self, funcname, value):
+    def expand_function_call(self, funcname, value, varstack):
         logging.debug('Expand function \"%s\" with \"%s\"', funcname, value)
         calls = [ MakeFunctionCall(value, self.lane) ]
         icurr = 0
@@ -208,7 +237,7 @@ class MakeParser:
             (ipos, symb) = parse_func_token(calls[icurr].line)
             logging.debug('Get symbol \"%s\" at %s', symb, ipos)
             if symb == '$':
-                calls.extend( calls[icurr].addvalue( calls[icurr].line[:ipos], self.expand_value(calls[icurr].line[ipos:]), self.context[-1]) )
+                calls.extend( calls[icurr].addvalue( calls[icurr].line[:ipos], self.expand_value(calls[icurr].line[ipos:], varstack), self.context[-1]) )
             elif symb == ',':
                 calls[icurr].makeargument(ipos)
             else:
